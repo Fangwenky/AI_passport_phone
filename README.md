@@ -21,9 +21,9 @@
 
 在 [Releases](../../releases) 下载：
 
-- `AI-Passport-Android-v0.2.0.apk`
-- `AI-Passport-macOS-v0.2.0.zip`
-- `AI-Passport-Windows-v0.2.0-x64.zip`
+- `AI-Passport-Android-v0.2.1.apk`
+- `AI-Passport-macOS-v0.2.1.zip`
+- `AI-Passport-Windows-v0.2.1-x64.zip`
 
 Android 端需要开启开发者选项和 USB 调试。桌面端点击“启动桥接”，再在手机输入六位配对码并点击“连接 / 配对”。USB 连接会自动配置 ADB 端口转发；Windows 包已包含 Android Platform Tools。局域网模式要求手机与电脑可以互相访问。
 

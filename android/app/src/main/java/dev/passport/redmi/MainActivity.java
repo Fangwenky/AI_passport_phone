@@ -189,6 +189,27 @@ public class MainActivity extends Activity {
             (int)(Color.green(first) * (1-a) + Color.green(second) * a),
             (int)(Color.blue(first) * (1-a) + Color.blue(second) * a));
     }
+    private double luminance(int color) {
+        double[] channels = {Color.red(color) / 255.0, Color.green(color) / 255.0, Color.blue(color) / 255.0};
+        for (int i = 0; i < channels.length; i++)
+            channels[i] = channels[i] <= .04045 ? channels[i] / 12.92 : Math.pow((channels[i] + .055) / 1.055, 2.4);
+        return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2];
+    }
+    private double contrast(int foreground, int background) {
+        double a = luminance(foreground), b = luminance(background);
+        return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+    }
+    private double wallpaperContrast(int foreground) {
+        return Math.min(contrast(foreground, backgroundStart), contrast(foreground, backgroundEnd));
+    }
+    private int wallpaperText(int... candidates) {
+        int best = candidates[0]; double score = -1;
+        for (int candidate : candidates) {
+            double next = wallpaperContrast(candidate);
+            if (next > score) { best = candidate; score = next; }
+        }
+        return best;
+    }
     private Button button(String text, int color) {
         Button b = new Button(this); b.setText(text); b.setTextColor(Color.WHITE); b.setAllCaps(false); b.setTextSize(14);
         b.setBackground(background(theme.equals("midnight") ? 0xFF9B4B5B : color, 14)); return b;
@@ -266,14 +287,19 @@ public class MainActivity extends Activity {
         floatAnimation.setDuration(7000); floatAnimation.setRepeatCount(ValueAnimator.INFINITE);
         floatAnimation.setRepeatMode(ValueAnimator.REVERSE); floatAnimation.start();
 
-        TextView brand = label("AI PASSPORT   ✦   WORK COMPANION", 11, apple, true); brandView = brand;
+        int wallpaperPrimary = wallpaperText(ink, cream, Color.WHITE, Color.BLACK);
+        int wallpaperSecondary = wallpaperContrast(muted) >= 4.5 ? muted : wallpaperPrimary;
+        int wallpaperAccent = wallpaperContrast(apple) >= 4.5 ? apple : wallpaperPrimary;
+        TextView brand = label("AI PASSPORT   ✦   WORK COMPANION", 11, wallpaperAccent, true); brandView = brand;
         brand.setLetterSpacing(0.16f);
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
         bp.leftMargin = dp(landscapeMode ? 34 : 25); bp.topMargin = dp(landscapeMode ? 30 : 43); wallpaper.addView(brand, bp);
-        clock = label("--:--", landscapeMode ? 72 : 66, ink, true); clock.setTypeface(Typeface.create("serif", Typeface.BOLD));
+        Date now = new Date();
+        clock = label(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), landscapeMode ? 72 : 66, wallpaperPrimary, true);
+        clock.setTypeface(Typeface.create("serif", Typeface.BOLD));
         FrameLayout.LayoutParams timeP = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
         timeP.leftMargin = dp(landscapeMode ? 30 : 22); timeP.topMargin = dp(landscapeMode ? 57 : 79); wallpaper.addView(clock, timeP);
-        dateLabel = label("", 14, muted, false);
+        dateLabel = label(new SimpleDateFormat("M 月 d 日  ·  EEEE", Locale.SIMPLIFIED_CHINESE).format(now), 14, wallpaperSecondary, false);
         FrameLayout.LayoutParams dateP = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
         dateP.leftMargin = dp(landscapeMode ? 35 : 27); dateP.topMargin = dp(landscapeMode ? 156 : 174); wallpaper.addView(dateLabel, dateP);
         connection = label("● 等待配对", 12, apple, true); pad(connection, 12, 8);
@@ -281,7 +307,7 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams statusP = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
         statusP.leftMargin = dp(landscapeMode ? 34 : 25); statusP.topMargin = dp(landscapeMode ? 199 : 217); wallpaper.addView(connection, statusP);
         String skinName = theme.equals("midnight") ? "MIDNIGHT" : theme.equals("custom") ? "MY COMPANION" : "OCEAN LINK";
-        TextView signature = label(skinName + "  ·  AI AT WORK", 11, muted, true); signatureView = signature;
+        TextView signature = label(skinName + "  ·  AI AT WORK", 11, wallpaperSecondary, true); signatureView = signature;
         signature.setLetterSpacing(.18f);
         FrameLayout.LayoutParams sigP = new FrameLayout.LayoutParams(-2, -2,
             Gravity.LEFT | (landscapeMode ? Gravity.BOTTOM : Gravity.TOP));
