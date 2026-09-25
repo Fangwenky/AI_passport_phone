@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>Pair the Redmi AI Passport desk display with this Mac.</string>
+  <key>CFBundleIdentifier</key><string>local.redmi.ai-passport.ble</string>
+</dict></plist>

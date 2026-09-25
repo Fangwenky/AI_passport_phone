@@ -1,0 +1,53 @@
+{
+  "name": "redmi-ai-passport",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "start": "node mac/bridge.js",
+    "test": "node --test mac/*.test.js",
+    "windows:dev": "electron .",
+    "windows:build": "sh scripts/stage-bridge.sh && electron-builder --win zip --x64"
+  },
+  "dependencies": {
+    "selfsigned": "^5.5.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "electron": "^38.2.1",
+    "electron-builder": "^26.0.12"
+  },
+  "allowScripts": {
+    "electron@38.2.1": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "main": "windows/main.cjs",
+  "build": {
+    "appId": "dev.aipassport.manager",
+    "productName": "AI Passport",
+    "directories": {
+      "output": "release/windows"
+    },
+    "files": [
+      "windows/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".build/bridge",
+        "to": "bridge"
+      },
+      {
+        "from": "windows/platform-tools",
+        "to": "platform-tools"
+      }
+    ],
+    "win": {
+      "target": "zip",
+      "icon": "windows/icon.png"
+    },
+    "artifactName": "AI-Passport-Windows-v${version}-${arch}.${ext}"
+  },
+  "description": "Turn an Android phone into a customizable Codex companion display.",
+  "author": "AI Passport contributors",
+  "license": "MIT"
+}

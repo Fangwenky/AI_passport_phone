@@ -1,0 +1,12 @@
+node_modules/
+android/.gradle/
+android/build/
+android/app/build/
+mac/bin/
+.data/
+.build/
+dist/
+release/
+windows/platform-tools/
+*.log
+.DS_Store
