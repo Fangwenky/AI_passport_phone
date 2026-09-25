@@ -13,6 +13,7 @@
 - 个人名片全屏展示姓名、自介、网站、邮箱和其他联系方式。
 - 背景方案库以预览卡片展示内置和自定义方案，点击即可切换并同步到手机。
 - 点击“添加背景方案”进入可视化编辑器，可实时预览角色、渐变背景和 7 个主题色；保存后自动生成新的方案卡片。
+- 切换方案时，Mac 和 Windows 管理端的侧栏、画布、卡片、文字与按钮也会同步使用该方案配色。
 - 内置“蓝鲸航线”和“午夜莓果”方案，支持为每个自定义方案单独保存透明 PNG 角色。
 - USB 优先配对，同一局域网可通过蓝牙交换加密连接信息。数据通道使用证书指纹固定的 WSS。
 - Android 沉浸式全屏、常亮、横竖屏响应布局和断线过期提示。
@@ -23,9 +24,9 @@
 
 在 [Releases](../../releases) 下载：
 
-- `AI-Passport-Android-v0.3.0.apk`
-- `AI-Passport-macOS-v0.3.0.zip`
-- `AI-Passport-Windows-v0.3.0-x64.zip`
+- `AI-Passport-Android-v0.3.1.apk`
+- `AI-Passport-macOS-v0.3.1.zip`
+- `AI-Passport-Windows-v0.3.1-x64.zip`
 
 Android 端需要开启开发者选项和 USB 调试。桌面端点击“启动桥接”，再在手机输入六位配对码并点击“连接 / 配对”。USB 连接会自动配置 ADB 端口转发；Windows 包已包含 Android Platform Tools。局域网模式要求手机与电脑可以互相访问。
 

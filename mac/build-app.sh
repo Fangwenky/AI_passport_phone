@@ -36,8 +36,8 @@ cat > "$HELPER/Contents/Info.plist" <<EOF
   <key>CFBundleName</key><string>Passport Bluetooth</string>
   <key>CFBundleExecutable</key><string>PassportBluetooth</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.3.0</string>
-  <key>CFBundleVersion</key><string>4</string>
+  <key>CFBundleShortVersionString</key><string>0.3.1</string>
+  <key>CFBundleVersion</key><string>5</string>
   <key>LSUIElement</key><true/>
   <key>NSBluetoothAlwaysUsageDescription</key><string>AI Passport uses Bluetooth to pair this Mac with the Redmi desk display.</string>
 </dict></plist>
@@ -54,8 +54,8 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <key>CFBundleExecutable</key><string>PassportManager</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.3.0</string>
-  <key>CFBundleVersion</key><string>4</string>
+  <key>CFBundleShortVersionString</key><string>0.3.1</string>
+  <key>CFBundleVersion</key><string>5</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSBluetoothAlwaysUsageDescription</key><string>AI Passport uses Bluetooth to pair this Mac with the Redmi desk display.</string>

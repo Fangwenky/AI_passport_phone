@@ -11,6 +11,15 @@ private extension Color {
         let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
         self.init(rgb: value)
     }
+    init(mixing first: String, with second: String, amount: Double) {
+        let a = UInt32(first.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+        let b = UInt32(second.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+        let t = max(0, min(1, amount))
+        func channel(_ shift: UInt32) -> Double {
+            Double((a >> shift) & 255) * (1 - t) + Double((b >> shift) & 255) * t
+        }
+        self.init(red: channel(16) / 255, green: channel(8) / 255, blue: channel(0) / 255)
+    }
     var hexString: String {
         let color = NSColor(self).usingColorSpace(.deviceRGB) ?? .black
         return String(format: "#%02X%02X%02X", Int(color.redComponent * 255),
@@ -297,7 +306,7 @@ private struct BridgeStatus: Decodable {
                     try JSONEncoder().encode(library).write(to: dataDir.appendingPathComponent("schemes.json"), options: .atomic)
                     try JSONEncoder().encode(appearance).write(to: dataDir.appendingPathComponent("appearance.json"), options: .atomic)
                 }
-                message = phoneConnected ? "背景方案已同步到手机" : "背景方案已切换"
+                message = phoneConnected ? "电脑界面与手机背景方案已同步切换" : "电脑界面背景方案已切换"
             } catch { message = "切换方案失败：\(error.localizedDescription)" }
         }
     }
@@ -442,6 +451,20 @@ private struct ManagerView: View {
     @State private var draftImage: NSImage?
     @State private var draftImageData: Data?
     private let character = NSImage(contentsOfFile: Bundle.main.path(forResource: "companion", ofType: "png") ?? "")
+    private var uiColors: PassportColors { model.appearance.colors }
+    private var uiCanvas: Color { Color(mixing: uiColors.surface, with: uiColors.accent, amount: 0.075) }
+    private var uiCard: Color { Color(hex: uiColors.surface) }
+    private var uiInk: Color { Color(hex: uiColors.ink) }
+    private var uiMuted: Color { Color(hex: uiColors.muted) }
+    private var uiAccent: Color { Color(hex: uiColors.accent) }
+    private var uiLine: Color { Color(hex: uiColors.line) }
+    private var uiSidebar: Color { Color(hex: uiColors.backgroundStart) }
+    private var uiSidebarText: Color {
+        previewIsDark(uiColors.backgroundStart, uiColors.backgroundEnd) ? .white : .black.opacity(0.84)
+    }
+    private var uiWallpaperText: Color {
+        previewIsDark(uiColors.backgroundStart, uiColors.backgroundEnd) ? .white : .black.opacity(0.82)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -454,7 +477,7 @@ private struct ManagerView: View {
                                 .font(.system(size: 32, weight: .bold, design: .serif))
                             Text(page == .home ? "连接、配对和运行状态都在这里。" :
                                  page == .appearance ? "选好皮肤，手机会立即换上。" : "决定手机里出现哪些功能，并编辑个人名片。")
-                                .font(.system(size: 13)).foregroundStyle(Palette.muted)
+                                .font(.system(size: 13)).foregroundStyle(uiMuted)
                         }
                         Spacer()
                         statusPill
@@ -462,15 +485,16 @@ private struct ManagerView: View {
                     if page == .home { overview }
                     else if page == .appearance { appearance }
                     else { modulesPage }
-                    Text(model.message).font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    Text(model.message).font(.system(size: 12)).foregroundStyle(uiMuted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(32)
             }
-            .foregroundStyle(Palette.cocoa)
-            .background(Palette.paper)
+            .foregroundStyle(uiInk)
+            .background(uiCanvas)
         }
         .frame(minWidth: 920, minHeight: 630)
+        .animation(.easeInOut(duration: 0.28), value: model.activeSchemeId)
         .onAppear { model.begin() }
         .onDisappear { model.shutdown() }
     }
@@ -480,63 +504,63 @@ private struct ManagerView: View {
             Text("✦  AI PASSPORT").font(.system(size: 15, weight: .heavy, design: .rounded))
                 .tracking(2).padding(.bottom, 6)
             Text("WORK COMPANION").font(.system(size: 10, weight: .medium))
-                .tracking(3).foregroundStyle(Color.white.opacity(0.55))
-            Rectangle().fill(Color.white.opacity(0.16)).frame(height: 1).padding(.vertical, 28)
+                .tracking(3).foregroundStyle(uiSidebarText.opacity(0.55))
+            Rectangle().fill(uiSidebarText.opacity(0.16)).frame(height: 1).padding(.vertical, 28)
             ForEach(Page.allCases, id: \.self) { item in
                 Button { page = item } label: {
                     Label(item.rawValue, systemImage: item.symbol)
                         .font(.system(size: 15, weight: page == item ? .semibold : .regular))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14).padding(.vertical, 13)
-                        .background(page == item ? Color.white.opacity(0.14) : .clear,
+                        .background(page == item ? uiSidebarText.opacity(0.14) : .clear,
                                     in: RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain).padding(.bottom, 5)
             }
             Spacer()
             Text("REDMI  /  DESK EDITION").font(.system(size: 10, weight: .bold))
-                .tracking(2).foregroundStyle(Color.white.opacity(0.52))
+                .tracking(2).foregroundStyle(uiSidebarText.opacity(0.52))
         }
-        .foregroundStyle(Color.white)
+        .foregroundStyle(uiSidebarText)
         .padding(22).frame(width: 220)
-        .background(Palette.cocoa)
+        .background(uiSidebar)
     }
 
     private var statusPill: some View {
         HStack(spacing: 7) {
-            Circle().fill(model.phoneConnected ? Color(rgb: 0x60A783) : Palette.apple)
+            Circle().fill(model.phoneConnected ? Color(rgb: 0x60A783) : uiAccent)
                 .frame(width: 8, height: 8)
             Text(model.phoneConnected ? "手机已连接" : model.running ? "等待手机" : "未启动")
         }
         .font(.system(size: 12, weight: .semibold))
         .padding(.horizontal, 13).padding(.vertical, 9)
-        .background(Palette.cream, in: Capsule())
-        .overlay(Capsule().stroke(Palette.line, lineWidth: 1))
+        .background(uiCard, in: Capsule())
+        .overlay(Capsule().stroke(uiLine, lineWidth: 1))
     }
 
     private var overview: some View {
         VStack(spacing: 18) {
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 24)
-                    .fill(LinearGradient(colors: [Color(rgb: 0xFFF7E9), Color(rgb: 0xF2D7CE)],
+                    .fill(LinearGradient(colors: [Color(hex: uiColors.backgroundStart), Color(hex: uiColors.backgroundEnd)],
                                          startPoint: .topLeading, endPoint: .bottomTrailing))
-                if let character {
-                    Image(nsImage: character).resizable().scaledToFit()
+                if let hero = model.schemeImage(model.activeSchemeId) ?? character {
+                    Image(nsImage: hero).resizable().scaledToFit()
                         .frame(width: 330, height: 330).offset(x: 320, y: 47)
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     Text("PAIRING CODE  /  配对码")
-                        .font(.system(size: 11, weight: .bold)).tracking(2).foregroundStyle(Palette.apple)
+                        .font(.system(size: 11, weight: .bold)).tracking(2).foregroundStyle(uiWallpaperText)
                     Text(model.pairingCode)
                         .font(.system(size: 58, weight: .bold, design: .serif)).tracking(5)
-                        .monospacedDigit().foregroundStyle(Palette.cocoa)
+                        .monospacedDigit().foregroundStyle(uiWallpaperText)
                     Text("在手机 AI Passport 中输入这六位数字，\n点击「连接 / 配对」。USB 会被优先使用。")
-                        .font(.system(size: 14)).foregroundStyle(Palette.cocoa.opacity(0.8))
+                        .font(.system(size: 14)).foregroundStyle(uiWallpaperText.opacity(0.82))
                         .lineSpacing(5)
                 }
                 .padding(32)
             }
-            .frame(height: 245).clipped().overlay(RoundedRectangle(cornerRadius: 24).stroke(Palette.line))
+            .frame(height: 245).clipped().overlay(RoundedRectangle(cornerRadius: 24).stroke(uiLine))
 
             HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 18) {
@@ -545,28 +569,28 @@ private struct ManagerView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(model.running ? "正在运行" : "尚未启动").font(.system(size: 17, weight: .semibold))
                             Text(model.running ? "电脑正在同步 Codex 工作内容" : "点击启动，自动准备 USB 数据连接")
-                                .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                                .font(.system(size: 12)).foregroundStyle(uiMuted)
                         }
                         Spacer()
                         Button(model.running ? "停止桥接" : "启动桥接") {
                             model.running ? model.stop() : model.start()
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(Palette.apple)
+                        .tint(uiAccent)
                     }
                     Picker("连接方式", selection: $model.transport) {
                         Text("USB").tag("USB")
                         Text("同一 Wi-Fi").tag("Wi-Fi")
                     }
-                    .pickerStyle(.segmented).tint(Palette.apple).disabled(model.running)
+                    .pickerStyle(.segmented).tint(uiAccent).disabled(model.running)
                     Text(model.transport == "USB"
                          ? "当前网络隔离时选 USB。启动时会自动设置 ADB 转发。"
                          : "手机和 Mac 需要处于可互访的同一局域网。")
-                        .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 11)).foregroundStyle(uiMuted)
                 }
                 .padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
 
                 VStack(alignment: .leading, spacing: 18) {
                     sectionTitle("实时状态", caption: "LIVE STATUS")
@@ -577,8 +601,8 @@ private struct ManagerView: View {
                     statusRow("数据地址", model.running ? model.host : "—")
                 }
                 .padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
             }
         }
     }
@@ -594,12 +618,12 @@ private struct ManagerView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Text("选择背景方案会立即同步到手机。自定义方案保存在这台电脑上。")
-                    .font(.system(size: 13)).foregroundStyle(Palette.muted)
+                    .font(.system(size: 13)).foregroundStyle(uiMuted)
                 Spacer()
                 Button { beginAppearanceEditor() } label: {
                     Label("添加背景方案", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent).tint(Palette.apple)
+                .buttonStyle(.borderedProminent).tint(uiAccent)
             }
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
                 ForEach(model.appearanceSchemes) { scheme in
@@ -609,14 +633,14 @@ private struct ManagerView: View {
                     VStack(spacing: 11) {
                         Image(systemName: "plus.circle.fill").font(.system(size: 34))
                         Text("添加背景方案").font(.system(size: 16, weight: .semibold))
-                        Text("角色、颜色与实时预览").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        Text("角色、颜色与实时预览").font(.system(size: 12)).foregroundStyle(uiMuted)
                     }
                     .frame(maxWidth: .infinity, minHeight: 310)
-                    .background(Palette.cream, in: RoundedRectangle(cornerRadius: 22))
-                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(Palette.line,
+                    .background(uiCard, in: RoundedRectangle(cornerRadius: 22))
+                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(uiLine,
                         style: StrokeStyle(lineWidth: 1.5, dash: [7])))
                 }
-                .buttonStyle(.plain).foregroundStyle(Palette.apple)
+                .buttonStyle(.plain).foregroundStyle(uiAccent)
             }
         }
     }
@@ -624,9 +648,9 @@ private struct ManagerView: View {
     private var appearanceEditor: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Button("‹ 返回方案库") { editingAppearance = false }.buttonStyle(.plain).foregroundStyle(Palette.apple)
+                Button("‹ 返回方案库") { editingAppearance = false }.buttonStyle(.plain).foregroundStyle(uiAccent)
                 Spacer()
-                Text("可视化背景编辑器").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.muted)
+                Text("可视化背景编辑器").font(.system(size: 13, weight: .semibold)).foregroundStyle(uiMuted)
             }
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -635,8 +659,8 @@ private struct ManagerView: View {
                         .frame(minHeight: 390)
                 }
                 .padding(18).frame(maxWidth: .infinity)
-                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
 
                 VStack(alignment: .leading, spacing: 14) {
                     sectionTitle("方案设置", caption: "NEW SCHEME")
@@ -647,7 +671,7 @@ private struct ManagerView: View {
                             if let selected = model.chooseCharacterData() {
                                 draftImageData = selected.0; draftImage = selected.1
                             }
-                        }.buttonStyle(.borderedProminent).tint(Palette.apple)
+                        }.buttonStyle(.borderedProminent).tint(uiAccent)
                         if draftImage != nil {
                             Button("使用默认角色") { draftImage = nil; draftImageData = nil }.buttonStyle(.plain)
                         }
@@ -671,13 +695,13 @@ private struct ManagerView: View {
                                              draft: draftAppearance, image: draftImageData) { saved in
                                 if saved { editingAppearance = false }
                             }
-                        }.buttonStyle(.borderedProminent).tint(Palette.apple)
+                        }.buttonStyle(.borderedProminent).tint(uiAccent)
                             .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
                 .padding(20).frame(width: 360).frame(minHeight: 430, alignment: .topLeading)
-                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
             }
         }
     }
@@ -695,20 +719,20 @@ private struct ManagerView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     sectionTitle("显示在手机上", caption: "MODULES")
                     Text("打开手机功能页时，只显示已启用的入口。")
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 12)).foregroundStyle(uiMuted)
                     moduleToggle("Codex 监看", detail: "实时进度 · 语音命令", id: "codex", symbol: "waveform.path")
                     moduleToggle("个人名片", detail: "自我介绍 · 网站 · 联系方式", id: "profile", symbol: "person.crop.rectangle")
                     Text("收起后再次展开，会回到手机上次打开的功能。")
-                        .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 11)).foregroundStyle(uiMuted)
                 }
                 .padding(22).frame(width: 275, alignment: .leading)
-                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
 
                 VStack(alignment: .leading, spacing: 15) {
                     sectionTitle("个人名片", caption: "ABOUT ME")
                     Text("填写的内容会显示在已配对的手机上；留空的项目不会出现。")
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .font(.system(size: 12)).foregroundStyle(uiMuted)
                     profileField("姓名", hint: "你希望展示的名字", text: $model.modules.profile.name)
                     profileField("一句话介绍", hint: "例如：设计与代码的实践者", text: $model.modules.profile.headline)
                     VStack(alignment: .leading, spacing: 7) {
@@ -716,21 +740,21 @@ private struct ManagerView: View {
                         TextEditor(text: $model.modules.profile.bio)
                             .font(.system(size: 13)).scrollContentBackground(.hidden)
                             .padding(7).frame(height: 140)
-                            .background(Palette.paper, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line))
+                            .background(uiCanvas, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(uiLine))
                     }
                     profileField("个人网站", hint: "https://example.com", text: $model.modules.profile.website)
                     profileField("邮箱", hint: "name@example.com", text: $model.modules.profile.email)
                     profileField("其他联系方式", hint: "微信、电话或其他方式", text: $model.modules.profile.contact)
                 }
                 .padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
             }
             HStack {
                 Spacer()
                 Button("保存并同步到手机") { model.saveModules() }
-                    .buttonStyle(.borderedProminent).tint(Palette.apple)
+                    .buttonStyle(.borderedProminent).tint(uiAccent)
             }
         }
     }
@@ -739,21 +763,21 @@ private struct ManagerView: View {
         let enabled = model.modules.enabled.contains(id)
         return Button { model.setModule(id, enabled: !enabled) } label: {
             HStack(spacing: 11) {
-                Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(Palette.apple)
+                Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(uiAccent)
                     .frame(width: 27)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.system(size: 14, weight: .semibold))
-                    Text(detail).font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    Text(detail).font(.system(size: 11)).foregroundStyle(uiMuted)
                 }
                 Spacer(minLength: 4)
                 Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 21)).foregroundStyle(enabled ? Palette.apple : Palette.muted)
+                    .font(.system(size: 21)).foregroundStyle(enabled ? uiAccent : uiMuted)
             }
         }
         .buttonStyle(.plain).accessibilityValue(enabled ? "已启用" : "已关闭")
         .padding(12)
-        .background(Palette.paper, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.line))
+        .background(uiCanvas, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(uiLine))
     }
 
     private func profileField(_ title: String, hint: String, text: Binding<String>) -> some View {
@@ -761,10 +785,10 @@ private struct ManagerView: View {
             Text(title).font(.system(size: 12, weight: .semibold))
             TextField(hint, text: text).textFieldStyle(.plain)
                 .environment(\.colorScheme, .light)
-                .font(.system(size: 13)).foregroundStyle(Palette.cocoa)
+                .font(.system(size: 13)).foregroundStyle(uiInk)
                 .padding(.horizontal, 11).frame(height: 35)
-                .background(Palette.paper, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Palette.line))
+                .background(uiCanvas, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(uiLine))
         }
     }
 
@@ -776,11 +800,11 @@ private struct ManagerView: View {
                     set: { value.wrappedValue = $0.hexString }), supportsOpacity: false)
                     .labelsHidden().frame(width: 24)
                 TextField("#RRGGBB", text: value).textFieldStyle(.plain).environment(\.colorScheme, .light)
-                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.cocoa)
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(uiInk)
             }
             .padding(.horizontal, 8).frame(height: 34)
-            .background(Palette.paper, in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line))
+            .background(uiCanvas, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(uiLine))
         }
     }
 
@@ -793,17 +817,17 @@ private struct ManagerView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(scheme.name).font(.system(size: 20, weight: .bold, design: .serif))
                         Text(scheme.note.isEmpty ? "自定义背景方案" : scheme.note)
-                            .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                            .font(.system(size: 12)).foregroundStyle(uiMuted)
                     }
                     Spacer()
                     Image(systemName: model.activeSchemeId == scheme.id ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 22)).foregroundStyle(Palette.apple)
+                        .font(.system(size: 22)).foregroundStyle(uiAccent)
                 }
             }
             .padding(14)
-            .background(Palette.cream, in: RoundedRectangle(cornerRadius: 22))
+            .background(uiCard, in: RoundedRectangle(cornerRadius: 22))
             .overlay(RoundedRectangle(cornerRadius: 22)
-                .stroke(model.activeSchemeId == scheme.id ? Palette.apple : Palette.line,
+                .stroke(model.activeSchemeId == scheme.id ? uiAccent : uiLine,
                         lineWidth: model.activeSchemeId == scheme.id ? 2 : 1))
         }
         .buttonStyle(.plain).frame(maxWidth: .infinity)
@@ -851,13 +875,13 @@ private struct ManagerView: View {
             Text(title).font(.system(size: 19, weight: .bold, design: .serif))
             Spacer()
             Text(caption).font(.system(size: 9, weight: .bold)).tracking(1.5)
-                .foregroundStyle(Palette.muted)
+                .foregroundStyle(uiMuted)
         }
     }
 
     private func statusRow(_ title: String, _ value: String) -> some View {
         HStack {
-            Text(title).foregroundStyle(Palette.muted)
+            Text(title).foregroundStyle(uiMuted)
             Spacer()
             Text(value).fontWeight(.semibold)
         }
