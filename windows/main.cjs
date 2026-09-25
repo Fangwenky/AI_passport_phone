@@ -51,6 +51,15 @@ app.whenReady().then(() => {
   ipcMain.handle('bridge:stop', async () => { try { await api('/stop','POST'); } catch {} return true; });
   ipcMain.handle('bridge:status', async () => { try { return {ok:true,...await api('/status')}; } catch { return {ok:false}; } });
   ipcMain.handle('appearance:save', (_, appearance) => api('/appearance','POST',appearance));
+  ipcMain.handle('scheme:save', (_, scheme) => api('/schemes','POST',scheme));
+  ipcMain.handle('scheme:activate', (_, id) => api('/schemes/activate','POST',{id}));
+  ipcMain.handle('scheme:image', (_, id) => {
+    const safe = /^[a-z0-9][a-z0-9-]{0,63}$/.test(id || '') ? id : 'ocean';
+    const custom = path.join(dataDir(), 'characters', `${safe}.png`);
+    const fallback = path.join(bridgeRoot(), 'android', 'app', 'src', 'main', 'res', 'drawable-nodpi', 'companion.png');
+    const file = fs.existsSync(custom) ? custom : fallback;
+    return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
+  });
   ipcMain.handle('modules:save', (_, modules) => api('/modules','POST',modules));
   ipcMain.handle('character:choose', async () => {
     const result = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'PNG character',extensions:['png']}]});

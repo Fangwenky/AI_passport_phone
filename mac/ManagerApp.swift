@@ -7,6 +7,15 @@ private extension Color {
                   green: Double((rgb >> 8) & 255) / 255,
                   blue: Double(rgb & 255) / 255)
     }
+    init(hex: String) {
+        let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+        self.init(rgb: value)
+    }
+    var hexString: String {
+        let color = NSColor(self).usingColorSpace(.deviceRGB) ?? .black
+        return String(format: "#%02X%02X%02X", Int(color.redComponent * 255),
+                      Int(color.greenComponent * 255), Int(color.blueComponent * 255))
+    }
 }
 
 private enum Palette {
@@ -29,10 +38,24 @@ private struct PassportColors: Codable {
 }
 
 private struct PassportAppearance: Codable {
+    var schemeId: String? = "ocean"
     var theme = "ocean"
     var character = "default"
     var colors = PassportColors()
     var revision: Int64 = 0
+}
+
+private struct PassportScheme: Codable, Identifiable {
+    var id: String
+    var name: String
+    var note: String
+    var builtIn: Bool? = false
+    var appearance: PassportAppearance
+}
+
+private struct AppearanceLibrary: Codable {
+    var activeId: String
+    var schemes: [PassportScheme]
 }
 
 private struct PassportProfile: Codable {
@@ -55,6 +78,8 @@ private struct BridgeStatus: Decodable {
     let bluetoothReady: Bool
     let theme: String
     let appearance: PassportAppearance
+    let appearanceSchemes: [PassportScheme]?
+    let activeSchemeId: String?
     let modules: PassportModules
     let taskCount: Int
     let codexConnected: Bool
@@ -69,6 +94,15 @@ private struct BridgeStatus: Decodable {
     @Published var pairingCode = "------"
     @Published var theme = "ocean"
     @Published var appearance = PassportAppearance()
+    @Published var appearanceSchemes: [PassportScheme] = [
+        PassportScheme(id: "ocean", name: "蓝鲸航线", note: "深海蓝 · 发光青", builtIn: true,
+                       appearance: PassportAppearance()),
+        PassportScheme(id: "midnight", name: "午夜莓果", note: "柔和夜色 · 暖金星点", builtIn: true,
+                       appearance: PassportAppearance(schemeId: "midnight", theme: "midnight", character: "default",
+                         colors: PassportColors(backgroundStart: "#171925", backgroundEnd: "#403042", surface: "#282536",
+                           ink: "#FFEDE5", muted: "#CCB3B3", accent: "#E9A895", line: "#64505F"), revision: 0))
+    ]
+    @Published var activeSchemeId = "ocean"
     @Published var modules = PassportModules()
     @Published var taskCount = 0
     @Published var host = ""
@@ -89,6 +123,13 @@ private struct BridgeStatus: Decodable {
         if let data = try? Data(contentsOf: file),
            let saved = try? JSONDecoder().decode(PassportAppearance.self, from: data) {
             appearance = saved; theme = saved.theme; appearanceLoaded = true
+        }
+        if let data = try? Data(contentsOf: dataDir.appendingPathComponent("schemes.json")),
+           let saved = try? JSONDecoder().decode(AppearanceLibrary.self, from: data) {
+            appearanceSchemes = saved.schemes; activeSchemeId = saved.activeId
+            if let selected = saved.schemes.first(where: { $0.id == saved.activeId }) {
+                appearance = selected.appearance; theme = selected.appearance.theme
+            }
         }
         if let data = try? Data(contentsOf: dataDir.appendingPathComponent("modules.json")),
            let saved = try? JSONDecoder().decode(PassportModules.self, from: data) {
@@ -130,7 +171,9 @@ private struct BridgeStatus: Decodable {
             codexConnected = status.codexConnected
             pairingCode = status.pairingCode.isEmpty ? "准备中" : status.pairingCode
             theme = status.theme
-            if !appearanceLoaded { appearance = status.appearance; appearanceLoaded = true }
+            if let schemes = status.appearanceSchemes { appearanceSchemes = schemes }
+            if let active = status.activeSchemeId { activeSchemeId = active }
+            appearance = status.appearance; appearanceLoaded = true
             if !modulesLoaded {
                 modules = status.modules
                 modulesLoaded = true
@@ -212,6 +255,89 @@ private struct BridgeStatus: Decodable {
     func shutdown() {
         timer?.invalidate()
         if bridge?.isRunning == true { bridge?.interrupt() }
+    }
+
+    func schemeImage(_ id: String) -> NSImage? {
+        NSImage(contentsOf: dataDir.appendingPathComponent("characters/\(id).png"))
+    }
+
+    func chooseCharacterData() -> (Data, NSImage)? {
+        let picker = NSOpenPanel()
+        picker.allowedContentTypes = [.png]
+        picker.allowsMultipleSelection = false
+        picker.message = "选择带透明背景的 PNG 角色图"
+        guard picker.runModal() == .OK, let url = picker.url,
+              let data = try? Data(contentsOf: url), data.count <= 8 * 1024 * 1024,
+              let image = NSImage(data: data) else {
+            message = "请选择小于 8 MB 的有效 PNG 图片"; return nil
+        }
+        return (data, image)
+    }
+
+    private func useLibrary(_ library: AppearanceLibrary) {
+        appearanceSchemes = library.schemes
+        activeSchemeId = library.activeId
+        if let selected = library.schemes.first(where: { $0.id == library.activeId }) {
+            appearance = selected.appearance; theme = selected.appearance.theme
+        }
+        appearanceLoaded = true
+    }
+
+    func activateScheme(_ id: String) {
+        guard let selected = appearanceSchemes.first(where: { $0.id == id }) else { return }
+        Task {
+            do {
+                if running {
+                    let body = try JSONSerialization.data(withJSONObject: ["id": id])
+                    useLibrary(try JSONDecoder().decode(AppearanceLibrary.self,
+                        from: await request("/schemes/activate", method: "POST", body: body)))
+                } else {
+                    activeSchemeId = id; appearance = selected.appearance; theme = selected.appearance.theme
+                    let library = AppearanceLibrary(activeId: id, schemes: appearanceSchemes)
+                    try JSONEncoder().encode(library).write(to: dataDir.appendingPathComponent("schemes.json"), options: .atomic)
+                    try JSONEncoder().encode(appearance).write(to: dataDir.appendingPathComponent("appearance.json"), options: .atomic)
+                }
+                message = phoneConnected ? "背景方案已同步到手机" : "背景方案已切换"
+            } catch { message = "切换方案失败：\(error.localizedDescription)" }
+        }
+    }
+
+    func saveScheme(name: String, note: String, draft: PassportAppearance, image: Data?, completion: @escaping (Bool) -> Void) {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { message = "请填写方案名称"; completion(false); return }
+        let values = Mirror(reflecting: draft.colors).children.compactMap { $0.value as? String }
+        guard values.allSatisfy({ $0.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) != nil }) else {
+            message = "颜色必须使用 #RRGGBB 格式"; completion(false); return
+        }
+        let id = "custom-" + UUID().uuidString.lowercased()
+        var next = draft
+        next.schemeId = id; next.theme = "custom"; next.character = image == nil ? "default" : "custom"
+        next.revision = Int64(Date().timeIntervalSince1970 * 1000)
+        Task {
+            do {
+                var object: [String: Any] = ["id": id, "name": title, "note": String(note.prefix(80)),
+                    "appearance": try JSONSerialization.jsonObject(with: JSONEncoder().encode(next))]
+                if let image { object["imageBase64"] = image.base64EncodedString() }
+                if running {
+                    let body = try JSONSerialization.data(withJSONObject: object)
+                    useLibrary(try JSONDecoder().decode(AppearanceLibrary.self,
+                        from: await request("/schemes", method: "POST", body: body)))
+                } else {
+                    let scheme = PassportScheme(id: id, name: title, note: String(note.prefix(80)), appearance: next)
+                    appearanceSchemes.append(scheme); activeSchemeId = id; appearance = next; theme = "custom"
+                    let library = AppearanceLibrary(activeId: id, schemes: appearanceSchemes)
+                    try JSONEncoder().encode(library).write(to: dataDir.appendingPathComponent("schemes.json"), options: .atomic)
+                    try JSONEncoder().encode(next).write(to: dataDir.appendingPathComponent("appearance.json"), options: .atomic)
+                    if let image {
+                        let directory = dataDir.appendingPathComponent("characters", isDirectory: true)
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        try image.write(to: directory.appendingPathComponent("\(id).png"), options: .atomic)
+                    }
+                }
+                message = phoneConnected ? "新方案已保存并同步到手机" : "新方案已保存"
+                completion(true)
+            } catch { message = "保存方案失败：\(error.localizedDescription)"; completion(false) }
+        }
     }
 
     func chooseTheme(_ value: String) {
@@ -309,6 +435,12 @@ private enum Page: String, CaseIterable {
 private struct ManagerView: View {
     @StateObject private var model = ManagerModel()
     @State private var page: Page = .home
+    @State private var editingAppearance = false
+    @State private var draftName = ""
+    @State private var draftNote = ""
+    @State private var draftAppearance = PassportAppearance(theme: "custom")
+    @State private var draftImage: NSImage?
+    @State private var draftImageData: Data?
     private let character = NSImage(contentsOfFile: Bundle.main.path(forResource: "companion", ofType: "png") ?? "")
 
     var body: some View {
@@ -452,37 +584,109 @@ private struct ManagerView: View {
     }
 
     private var appearance: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("选择预设，或上传透明 PNG 并用十六进制颜色设计自己的桌面伙伴。")
-                .font(.system(size: 13)).foregroundStyle(Palette.muted)
-            HStack(alignment: .top, spacing: 18) {
-                themeCard("ocean", name: "蓝鲸航线", note: "深海蓝 · 发光青", dark: false)
-                themeCard("midnight", name: "午夜莓果", note: "柔和夜色 · 暖金星点", dark: true)
-            }
-            VStack(alignment: .leading, spacing: 14) {
-                sectionTitle("自定义角色与风格", caption: "CUSTOM SKIN")
-                HStack {
-                    Button("选择角色 PNG") { model.chooseCharacter() }
-                        .buttonStyle(.borderedProminent).tint(Palette.apple)
-                    Text(model.appearance.character == "custom" ? "已使用本地角色" : "当前使用默认蓝鲸角色")
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
-                }
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    colorField("背景起点", text: $model.appearance.colors.backgroundStart)
-                    colorField("背景终点", text: $model.appearance.colors.backgroundEnd)
-                    colorField("卡片表面", text: $model.appearance.colors.surface)
-                    colorField("正文", text: $model.appearance.colors.ink)
-                    colorField("辅助文字", text: $model.appearance.colors.muted)
-                    colorField("强调色", text: $model.appearance.colors.accent)
-                    colorField("描边", text: $model.appearance.colors.line)
-                }
-                HStack { Spacer(); Button("保存自定义风格") {
-                    model.appearance.theme = "custom"; model.saveAppearance()
-                }.buttonStyle(.borderedProminent).tint(Palette.apple) }
-            }
-            .padding(22).background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+        Group {
+            if editingAppearance { appearanceEditor }
+            else { appearanceLibrary }
         }
+    }
+
+    private var appearanceLibrary: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("选择背景方案会立即同步到手机。自定义方案保存在这台电脑上。")
+                    .font(.system(size: 13)).foregroundStyle(Palette.muted)
+                Spacer()
+                Button { beginAppearanceEditor() } label: {
+                    Label("添加背景方案", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent).tint(Palette.apple)
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 18) {
+                ForEach(model.appearanceSchemes) { scheme in
+                    schemeCard(scheme)
+                }
+                Button { beginAppearanceEditor() } label: {
+                    VStack(spacing: 11) {
+                        Image(systemName: "plus.circle.fill").font(.system(size: 34))
+                        Text("添加背景方案").font(.system(size: 16, weight: .semibold))
+                        Text("角色、颜色与实时预览").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 310)
+                    .background(Palette.cream, in: RoundedRectangle(cornerRadius: 22))
+                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(Palette.line,
+                        style: StrokeStyle(lineWidth: 1.5, dash: [7])))
+                }
+                .buttonStyle(.plain).foregroundStyle(Palette.apple)
+            }
+        }
+    }
+
+    private var appearanceEditor: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Button("‹ 返回方案库") { editingAppearance = false }.buttonStyle(.plain).foregroundStyle(Palette.apple)
+                Spacer()
+                Text("可视化背景编辑器").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.muted)
+            }
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 12) {
+                    sectionTitle("实时预览", caption: "LIVE PREVIEW")
+                    appearancePreview(draftAppearance, image: draftImage ?? character)
+                        .frame(minHeight: 390)
+                }
+                .padding(18).frame(maxWidth: .infinity)
+                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+
+                VStack(alignment: .leading, spacing: 14) {
+                    sectionTitle("方案设置", caption: "NEW SCHEME")
+                    profileField("方案名称", hint: "例如：樱花午后", text: $draftName)
+                    profileField("方案说明", hint: "例如：淡粉 · 柔光", text: $draftNote)
+                    HStack {
+                        Button("选择角色 PNG") {
+                            if let selected = model.chooseCharacterData() {
+                                draftImageData = selected.0; draftImage = selected.1
+                            }
+                        }.buttonStyle(.borderedProminent).tint(Palette.apple)
+                        if draftImage != nil {
+                            Button("使用默认角色") { draftImage = nil; draftImageData = nil }.buttonStyle(.plain)
+                        }
+                    }
+                    Divider()
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 11) {
+                        visualColorField("背景起点", value: $draftAppearance.colors.backgroundStart)
+                        visualColorField("背景终点", value: $draftAppearance.colors.backgroundEnd)
+                        visualColorField("卡片表面", value: $draftAppearance.colors.surface)
+                        visualColorField("正文", value: $draftAppearance.colors.ink)
+                        visualColorField("辅助文字", value: $draftAppearance.colors.muted)
+                        visualColorField("强调色", value: $draftAppearance.colors.accent)
+                        visualColorField("描边", value: $draftAppearance.colors.line)
+                    }
+                    Spacer(minLength: 4)
+                    HStack {
+                        Button("取消") { editingAppearance = false }.buttonStyle(.plain)
+                        Spacer()
+                        Button("保存并启用") {
+                            model.saveScheme(name: draftName, note: draftNote,
+                                             draft: draftAppearance, image: draftImageData) { saved in
+                                if saved { editingAppearance = false }
+                            }
+                        }.buttonStyle(.borderedProminent).tint(Palette.apple)
+                            .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .padding(20).frame(width: 360).frame(minHeight: 430, alignment: .topLeading)
+                .background(Palette.cream, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.line))
+            }
+        }
+    }
+
+    private func beginAppearanceEditor() {
+        draftName = ""; draftNote = ""
+        draftAppearance = PassportAppearance(schemeId: nil, theme: "custom", character: "default",
+                                             colors: model.appearance.colors, revision: 0)
+        draftImage = nil; draftImageData = nil; editingAppearance = true
     }
 
     private var modulesPage: some View {
@@ -564,54 +768,82 @@ private struct ManagerView: View {
         }
     }
 
-    private func colorField(_ title: String, text: Binding<String>) -> some View {
+    private func visualColorField(_ title: String, value: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.system(size: 11, weight: .semibold))
-            TextField("#RRGGBB", text: text).textFieldStyle(.plain).environment(\.colorScheme, .light)
-                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.cocoa)
-                .padding(.horizontal, 10).frame(height: 34)
-                .background(Palette.paper, in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line))
+            HStack(spacing: 7) {
+                ColorPicker("", selection: Binding(get: { Color(hex: value.wrappedValue) },
+                    set: { value.wrappedValue = $0.hexString }), supportsOpacity: false)
+                    .labelsHidden().frame(width: 24)
+                TextField("#RRGGBB", text: value).textFieldStyle(.plain).environment(\.colorScheme, .light)
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.cocoa)
+            }
+            .padding(.horizontal, 8).frame(height: 34)
+            .background(Palette.paper, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Palette.line))
         }
     }
 
-    private func themeCard(_ id: String, name: String, note: String, dark: Bool) -> some View {
-        Button { model.chooseTheme(id) } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 17)
-                        .fill(dark ? Color(rgb: 0x252333) : Color(rgb: 0x0B4D80))
-                    if let character {
-                        Image(nsImage: character).resizable().scaledToFit()
-                            .frame(width: 245, height: 245).offset(x: 70, y: 57)
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("12:48").font(.system(size: 42, weight: .bold, design: .serif))
-                        Text("9 月 20 日 · 星期日").font(.system(size: 11))
-                        Text("● 已连接").font(.system(size: 11, weight: .semibold)).padding(7)
-                            .background(dark ? Color(rgb: 0x383344) : .white, in: Capsule())
-                    }
-                    .foregroundStyle(Color.white)
-                    .padding(20)
-                }
-                .frame(height: 250).clipped()
+    private func schemeCard(_ scheme: PassportScheme) -> some View {
+        Button { model.activateScheme(scheme.id) } label: {
+            VStack(alignment: .leading, spacing: 13) {
+                appearancePreview(scheme.appearance, image: model.schemeImage(scheme.id) ?? character)
+                    .frame(height: 225)
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(name).font(.system(size: 20, weight: .bold, design: .serif))
-                        Text(note).font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        Text(scheme.name).font(.system(size: 20, weight: .bold, design: .serif))
+                        Text(scheme.note.isEmpty ? "自定义背景方案" : scheme.note)
+                            .font(.system(size: 12)).foregroundStyle(Palette.muted)
                     }
                     Spacer()
-                    Image(systemName: model.theme == id ? "checkmark.circle.fill" : "circle")
+                    Image(systemName: model.activeSchemeId == scheme.id ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 22)).foregroundStyle(Palette.apple)
                 }
             }
             .padding(14)
             .background(Palette.cream, in: RoundedRectangle(cornerRadius: 22))
             .overlay(RoundedRectangle(cornerRadius: 22)
-                .stroke(model.theme == id ? Palette.apple : Palette.line, lineWidth: model.theme == id ? 2 : 1))
+                .stroke(model.activeSchemeId == scheme.id ? Palette.apple : Palette.line,
+                        lineWidth: model.activeSchemeId == scheme.id ? 2 : 1))
         }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
+        .buttonStyle(.plain).frame(maxWidth: .infinity)
+    }
+
+    private func appearancePreview(_ appearance: PassportAppearance, image: NSImage?) -> some View {
+        GeometryReader { proxy in
+            let dark = previewIsDark(appearance.colors.backgroundStart, appearance.colors.backgroundEnd)
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 17)
+                    .fill(LinearGradient(colors: [Color(hex: appearance.colors.backgroundStart),
+                                                  Color(hex: appearance.colors.backgroundEnd)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                Circle().fill(Color(hex: appearance.colors.accent).opacity(0.18))
+                    .frame(width: proxy.size.height * 1.15).offset(x: proxy.size.width * 0.62, y: -proxy.size.height * 0.34)
+                if let image {
+                    Image(nsImage: image).resizable().scaledToFit()
+                        .frame(width: proxy.size.width * 0.62, height: proxy.size.height * 1.05)
+                        .offset(x: proxy.size.width * 0.39, y: proxy.size.height * 0.02)
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("AI PASSPORT  ✦").font(.system(size: 9, weight: .bold)).tracking(1.4)
+                    Text("12:48").font(.system(size: min(43, proxy.size.height * 0.2), weight: .bold, design: .serif))
+                    Text("9 月 25 日 · 星期五").font(.system(size: 10))
+                    Text("● 已连接").font(.system(size: 10, weight: .semibold)).padding(.horizontal, 9).padding(.vertical, 6)
+                        .background(Color(hex: appearance.colors.surface), in: Capsule())
+                        .foregroundStyle(Color(hex: appearance.colors.accent))
+                }
+                .foregroundStyle(dark ? Color.white : Color.black.opacity(0.82)).padding(18)
+            }
+            .clipped()
+        }
+    }
+
+    private func previewIsDark(_ first: String, _ second: String) -> Bool {
+        func brightness(_ value: String) -> Double {
+            let number = UInt32(value.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+            return (0.2126 * Double((number >> 16) & 255) + 0.7152 * Double((number >> 8) & 255) + 0.0722 * Double(number & 255)) / 255
+        }
+        return (brightness(first) + brightness(second)) / 2 < 0.53
     }
 
     private func sectionTitle(_ title: String, caption: String) -> some View {

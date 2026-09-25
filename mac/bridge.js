@@ -11,7 +11,7 @@ import selfsigned from 'selfsigned';
 import {SessionLog} from './session-log.js';
 import {CodexClient} from './codex-client.js';
 import {defaultModules, normalizeModules} from './modules.js';
-import {defaultAppearance, normalizeAppearance} from './appearance.js';
+import {builtInSchemes, defaultAppearance, normalizeAppearance, normalizeLibrary, normalizeScheme} from './appearance.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const project = path.dirname(directory);
@@ -24,6 +24,9 @@ const token = fs.readFileSync(tokenFile, 'utf8').trim();
 if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Invalid bridge token; delete .data/bridge-token and pair again');
 const appearanceFile = path.join(dataDir, 'appearance.json');
 const customCharacterFile = path.join(dataDir, 'custom-character.png');
+const schemesFile = path.join(dataDir, 'schemes.json');
+const charactersDir = path.join(dataDir, 'characters');
+fs.mkdirSync(charactersDir, {recursive: true, mode: 0o700});
 const modulesFile = path.join(dataDir, 'modules.json');
 let modules = defaultModules;
 try { modules = normalizeModules(JSON.parse(fs.readFileSync(modulesFile, 'utf8'))); } catch {}
@@ -33,6 +36,25 @@ try {
   if (saved.theme === 'apple-pie') appearance = {...defaultAppearance, theme: 'custom', character: 'custom'};
   else appearance = normalizeAppearance(saved);
 } catch {}
+let appearanceLibrary;
+try { appearanceLibrary = normalizeLibrary(JSON.parse(fs.readFileSync(schemesFile, 'utf8'))); }
+catch {
+  if (appearance.theme === 'custom') {
+    const id = 'local-custom';
+    appearance = normalizeAppearance({...appearance, schemeId: id});
+    appearanceLibrary = normalizeLibrary({activeId: id, schemes: [
+      {id, name: '我的角色', note: '本地自定义方案', appearance}
+    ]});
+    if (fs.existsSync(customCharacterFile)) fs.copyFileSync(customCharacterFile, path.join(charactersDir, `${id}.png`));
+  } else appearanceLibrary = normalizeLibrary({activeId: appearance.schemeId || appearance.theme, schemes: []});
+}
+const selectedAtLaunch = appearanceLibrary.schemes.find(item => item.id === appearanceLibrary.activeId);
+if (selectedAtLaunch) appearance = selectedAtLaunch.appearance;
+function persistAppearanceLibrary() {
+  fs.writeFileSync(schemesFile, JSON.stringify(appearanceLibrary), {mode: 0o600});
+  fs.writeFileSync(appearanceFile, JSON.stringify(appearance), {mode: 0o600});
+}
+persistAppearanceLibrary();
 let pairingCode = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
 let bluetoothReady = false;
 const keyFile = path.join(dataDir, 'server.key');
@@ -90,15 +112,19 @@ function run(binary, args, timeoutMs) {
 const server = https.createServer({key: fs.readFileSync(keyFile), cert: certificate}, (req, res) => {
   const url = new URL(req.url, 'https://localhost');
   if (req.method === 'GET' && url.pathname === '/character' && url.searchParams.get('token') === token) {
-    const file = appearance.character === 'custom' && fs.existsSync(customCharacterFile)
-      ? customCharacterFile : path.join(project, 'android/app/src/main/res/drawable-nodpi/companion.png');
+    const schemeCharacter = path.join(charactersDir, `${appearance.schemeId}.png`);
+    const file = appearance.character === 'custom' && fs.existsSync(schemeCharacter)
+      ? schemeCharacter : appearance.character === 'custom' && fs.existsSync(customCharacterFile)
+        ? customCharacterFile : path.join(project, 'android/app/src/main/res/drawable-nodpi/companion.png');
     res.writeHead(200, {'Content-Type': 'image/png', 'Cache-Control': 'no-store'});
     fs.createReadStream(file).pipe(res); return;
   }
   res.writeHead(404); res.end();
 });
 const wss = new WebSocketServer({noServer: true, maxPayload: 8 * 1024 * 1024});
-function snapshot(ws) { send(ws, {type: 'snapshot', tasks: tasks(), theme: appearance.theme, appearance, modules, serverTime: Date.now(), officialConnected: codex.ready}); }
+function snapshot(ws) { send(ws, {type: 'snapshot', tasks: tasks(), theme: appearance.theme, appearance,
+  appearanceSchemes: appearanceLibrary.schemes, activeSchemeId: appearanceLibrary.activeId,
+  modules, serverTime: Date.now(), officialConnected: codex.ready}); }
 server.on('upgrade', (req, socket, head) => {
   const provided = new URL(req.url, 'https://localhost').searchParams.get('token') || '';
   const a = Buffer.from(provided); const b = Buffer.from(token);
@@ -161,7 +187,51 @@ const control = http.createServer((req, res) => {
   };
   if (req.method === 'GET' && req.url === '/status') {
     reply(200, {pairingCode, bluetoothReady, connected: wss.clients.size > 0, clients: wss.clients.size,
-      theme: appearance.theme, appearance, modules, taskCount: tasks().length, codexConnected: codex.ready, host, port});
+      theme: appearance.theme, appearance, appearanceSchemes: appearanceLibrary.schemes,
+      activeSchemeId: appearanceLibrary.activeId, modules, taskCount: tasks().length, codexConnected: codex.ready, host, port});
+  } else if (req.method === 'POST' && req.url === '/schemes/activate') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 1024) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const id = String(JSON.parse(body).id || '');
+        const selected = appearanceLibrary.schemes.find(item => item.id === id);
+        if (!selected) throw new Error('Scheme not found');
+        appearanceLibrary.activeId = id; appearance = selected.appearance;
+        persistAppearanceLibrary();
+        broadcast({type: 'appearance', theme: appearance.theme, appearance,
+          appearanceSchemes: appearanceLibrary.schemes, activeSchemeId: id});
+        reply(200, appearanceLibrary);
+      } catch (error) { reply(400, {error: error.message}); }
+    });
+  } else if (req.method === 'POST' && req.url === '/schemes') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 12 * 1024 * 1024) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const value = JSON.parse(body);
+        const id = /^[a-z0-9][a-z0-9-]{0,63}$/.test(value.id || '') ? value.id : `custom-${Date.now()}`;
+        if (builtInSchemes.some(item => item.id === id)) throw new Error('Built-in schemes cannot be replaced');
+        const imageFile = path.join(charactersDir, `${id}.png`);
+        if (value.imageBase64 !== undefined) {
+          const bytes = Buffer.from(String(value.imageBase64), 'base64');
+          if (bytes.length < 64 || bytes.length > 8 * 1024 * 1024 || bytes.subarray(1, 4).toString() !== 'PNG')
+            throw new Error('Character image must be a PNG smaller than 8 MB');
+          fs.writeFileSync(imageFile, bytes, {mode: 0o600});
+        }
+        const scheme = normalizeScheme({id, name: value.name, note: value.note,
+          appearance: {...value.appearance, schemeId: id, theme: 'custom',
+            character: fs.existsSync(imageFile) ? 'custom' : 'default', revision: Date.now()}});
+        const index = appearanceLibrary.schemes.findIndex(item => item.id === id);
+        if (index >= 0) appearanceLibrary.schemes[index] = scheme;
+        else appearanceLibrary.schemes.push(scheme);
+        appearanceLibrary.activeId = id; appearance = scheme.appearance;
+        persistAppearanceLibrary();
+        broadcast({type: 'appearance', theme: appearance.theme, appearance,
+          appearanceSchemes: appearanceLibrary.schemes, activeSchemeId: id});
+        reply(200, appearanceLibrary);
+      } catch (error) { reply(400, {error: error.message}); }
+    });
   } else if (req.method === 'POST' && (req.url === '/theme' || req.url === '/appearance')) {
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 12 * 1024 * 1024) req.destroy(); });
@@ -180,7 +250,16 @@ const control = http.createServer((req, res) => {
         }
         appearance = normalizeAppearance(value);
         if (appearance.character === 'custom' && !fs.existsSync(customCharacterFile)) throw new Error('Choose a character PNG first');
-        fs.writeFileSync(appearanceFile, JSON.stringify(appearance), {mode: 0o600});
+        const legacyId = appearance.theme === 'custom' ? 'local-custom' : appearance.theme;
+        appearance = normalizeAppearance({...appearance, schemeId: legacyId});
+        if (appearance.character === 'custom') fs.copyFileSync(customCharacterFile, path.join(charactersDir, `${legacyId}.png`));
+        const existing = appearanceLibrary.schemes.findIndex(item => item.id === legacyId);
+        if (existing >= 0) appearanceLibrary.schemes[existing] = normalizeScheme({
+          ...appearanceLibrary.schemes[existing], appearance
+        });
+        else appearanceLibrary.schemes.push(normalizeScheme({id: legacyId, name: '我的角色', note: '本地自定义方案', appearance}));
+        appearanceLibrary.activeId = legacyId;
+        persistAppearanceLibrary();
         broadcast({type: 'appearance', theme: appearance.theme, appearance});
         reply(200, appearance);
       } catch (error) { reply(400, {error: error.message}); }
@@ -222,7 +301,9 @@ async function refresh() {
       officialLastOK = Date.now();
     } catch (error) { console.warn('App Server list:', error.message); officialLastOK = Date.now(); }
   }
-  broadcast({type: 'snapshot', tasks: tasks(), theme: appearance.theme, appearance, modules, serverTime: Date.now(), officialConnected: codex.ready});
+  broadcast({type: 'snapshot', tasks: tasks(), theme: appearance.theme, appearance,
+    appearanceSchemes: appearanceLibrary.schemes, activeSchemeId: appearanceLibrary.activeId,
+    modules, serverTime: Date.now(), officialConnected: codex.ready});
 }
 setInterval(refresh, 2000).unref();
 codex.on('notification', refresh);
