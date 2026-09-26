@@ -10,7 +10,7 @@ import WebSocket, {WebSocketServer} from 'ws';
 import selfsigned from 'selfsigned';
 import {SessionLog} from './session-log.js';
 import {CodexClient} from './codex-client.js';
-import {defaultModules, normalizeModules} from './modules.js';
+import {defaultModules, moduleCatalog, normalizeModules} from './modules.js';
 import {builtInSchemes, defaultAppearance, normalizeAppearance, normalizeLibrary, normalizeScheme} from './appearance.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -124,7 +124,7 @@ const server = https.createServer({key: fs.readFileSync(keyFile), cert: certific
 const wss = new WebSocketServer({noServer: true, maxPayload: 8 * 1024 * 1024});
 function snapshot(ws) { send(ws, {type: 'snapshot', tasks: tasks(), theme: appearance.theme, appearance,
   appearanceSchemes: appearanceLibrary.schemes, activeSchemeId: appearanceLibrary.activeId,
-  modules, serverTime: Date.now(), officialConnected: codex.ready}); }
+  modules, moduleCatalog, serverTime: Date.now(), officialConnected: codex.ready}); }
 server.on('upgrade', (req, socket, head) => {
   const provided = new URL(req.url, 'https://localhost').searchParams.get('token') || '';
   const a = Buffer.from(provided); const b = Buffer.from(token);
@@ -188,7 +188,8 @@ const control = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/status') {
     reply(200, {pairingCode, bluetoothReady, connected: wss.clients.size > 0, clients: wss.clients.size,
       theme: appearance.theme, appearance, appearanceSchemes: appearanceLibrary.schemes,
-      activeSchemeId: appearanceLibrary.activeId, modules, taskCount: tasks().length, codexConnected: codex.ready, host, port});
+      activeSchemeId: appearanceLibrary.activeId, modules, moduleCatalog,
+      taskCount: tasks().length, codexConnected: codex.ready, host, port});
   } else if (req.method === 'POST' && req.url === '/schemes/activate') {
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 1024) req.destroy(); });
@@ -273,7 +274,7 @@ const control = http.createServer((req, res) => {
       catch (error) { reply(400, {error: error.message}); return; }
       modules = next;
       fs.writeFileSync(modulesFile, JSON.stringify(modules), {mode: 0o600});
-      broadcast({type: 'modules', modules});
+      broadcast({type: 'modules', modules, moduleCatalog});
       reply(200, modules);
     });
   } else if (req.method === 'POST' && req.url === '/stop') {
@@ -303,7 +304,7 @@ async function refresh() {
   }
   broadcast({type: 'snapshot', tasks: tasks(), theme: appearance.theme, appearance,
     appearanceSchemes: appearanceLibrary.schemes, activeSchemeId: appearanceLibrary.activeId,
-    modules, serverTime: Date.now(), officialConnected: codex.ready});
+    modules, moduleCatalog, serverTime: Date.now(), officialConnected: codex.ready});
 }
 setInterval(refresh, 2000).unref();
 codex.on('notification', refresh);

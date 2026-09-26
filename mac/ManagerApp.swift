@@ -81,6 +81,29 @@ private struct PassportModules: Codable {
     var profile = PassportProfile()
 }
 
+private struct PhoneModuleDefinition: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    var shortName: String
+    var category: String
+    var summary: String
+    var icon: String
+    var phoneIcon: String
+    var settings: String
+    var features: [String]
+}
+
+private let defaultModuleCatalog = [
+    PhoneModuleDefinition(id: "codex", name: "Codex 工作流", shortName: "Codex 监看", category: "工作",
+        summary: "实时查看任务进度，并通过确认后的语音命令创建或继续任务。",
+        icon: "waveform.path", phoneIcon: "◉", settings: "codex",
+        features: ["实时任务流", "语音命令", "断线状态"]),
+    PhoneModuleDefinition(id: "profile", name: "个人名片", shortName: "个人名片", category: "展示",
+        summary: "在手机上展示自我介绍、个人网站和联系方式。",
+        icon: "person.crop.rectangle", phoneIcon: "✦", settings: "profile",
+        features: ["个人简介", "联系方式", "全屏展示"])
+]
+
 private struct BridgeStatus: Decodable {
     let pairingCode: String
     let connected: Bool
@@ -90,6 +113,7 @@ private struct BridgeStatus: Decodable {
     let appearanceSchemes: [PassportScheme]?
     let activeSchemeId: String?
     let modules: PassportModules
+    let moduleCatalog: [PhoneModuleDefinition]?
     let taskCount: Int
     let codexConnected: Bool
     let host: String
@@ -113,6 +137,7 @@ private struct BridgeStatus: Decodable {
     ]
     @Published var activeSchemeId = "ocean"
     @Published var modules = PassportModules()
+    @Published var moduleCatalog = defaultModuleCatalog
     @Published var taskCount = 0
     @Published var host = ""
     @Published var transport = "USB"
@@ -183,6 +208,7 @@ private struct BridgeStatus: Decodable {
             if let schemes = status.appearanceSchemes { appearanceSchemes = schemes }
             if let active = status.activeSchemeId { activeSchemeId = active }
             appearance = status.appearance; appearanceLoaded = true
+            if let catalog = status.moduleCatalog, !catalog.isEmpty { moduleCatalog = catalog }
             if !modulesLoaded {
                 modules = status.modules
                 modulesLoaded = true
@@ -450,6 +476,7 @@ private struct ManagerView: View {
     @State private var draftAppearance = PassportAppearance(theme: "custom")
     @State private var draftImage: NSImage?
     @State private var draftImageData: Data?
+    @State private var selectedModuleId: String?
     private let character = NSImage(contentsOfFile: Bundle.main.path(forResource: "companion", ofType: "png") ?? "")
     private var uiColors: PassportColors { model.appearance.colors }
     private var uiCanvas: Color { Color(mixing: uiColors.surface, with: uiColors.accent, amount: 0.075) }
@@ -476,7 +503,7 @@ private struct ManagerView: View {
                             Text(page == .home ? "桌面工作台" : page == .appearance ? "外观皮肤" : "手机功能")
                                 .font(.system(size: 32, weight: .bold, design: .serif))
                             Text(page == .home ? "连接、配对和运行状态都在这里。" :
-                                 page == .appearance ? "选好皮肤，手机会立即换上。" : "决定手机里出现哪些功能，并编辑个人名片。")
+                                 page == .appearance ? "选好皮肤，手机会立即换上。" : "管理手机功能入口，并进入每个模块的独立设置。")
                                 .font(.system(size: 13)).foregroundStyle(uiMuted)
                         }
                         Spacer()
@@ -507,7 +534,7 @@ private struct ManagerView: View {
                 .tracking(3).foregroundStyle(uiSidebarText.opacity(0.55))
             Rectangle().fill(uiSidebarText.opacity(0.16)).frame(height: 1).padding(.vertical, 28)
             ForEach(Page.allCases, id: \.self) { item in
-                Button { page = item } label: {
+                Button { page = item; if item != .modules { selectedModuleId = nil } } label: {
                     Label(item.rawValue, systemImage: item.symbol)
                         .font(.system(size: 15, weight: page == item ? .semibold : .regular))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -714,70 +741,216 @@ private struct ManagerView: View {
     }
 
     private var modulesPage: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 18) {
-                    sectionTitle("显示在手机上", caption: "MODULES")
-                    Text("打开手机功能页时，只显示已启用的入口。")
-                        .font(.system(size: 12)).foregroundStyle(uiMuted)
-                    moduleToggle("Codex 监看", detail: "实时进度 · 语音命令", id: "codex", symbol: "waveform.path")
-                    moduleToggle("个人名片", detail: "自我介绍 · 网站 · 联系方式", id: "profile", symbol: "person.crop.rectangle")
-                    Text("收起后再次展开，会回到手机上次打开的功能。")
-                        .font(.system(size: 11)).foregroundStyle(uiMuted)
-                }
-                .padding(22).frame(width: 275, alignment: .leading)
-                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+        Group {
+            if let id = selectedModuleId { moduleSettingsPage(id) }
+            else { moduleLibrary }
+        }
+        .animation(.easeInOut(duration: 0.2), value: selectedModuleId)
+    }
 
-                VStack(alignment: .leading, spacing: 15) {
-                    sectionTitle("个人名片", caption: "ABOUT ME")
-                    Text("填写的内容会显示在已配对的手机上；留空的项目不会出现。")
+    private var moduleLibrary: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 6) {
+                    sectionTitle("模块中心", caption: "PHONE MODULES")
+                    Text("选择模块进入设置；启用后才会出现在手机的功能抽屉中。")
                         .font(.system(size: 12)).foregroundStyle(uiMuted)
+                }
+                Spacer()
+                Text("已启用 \(model.modules.enabled.count) / \(model.moduleCatalog.count)")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(uiAccent)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(uiCanvas, in: Capsule())
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                ForEach(model.moduleCatalog) { module in moduleCard(module) }
+            }
+            Button { selectedModuleId = "__developer__" } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "shippingbox.and.arrow.backward.fill")
+                        .font(.system(size: 20)).foregroundStyle(uiAccent).frame(width: 34, height: 34)
+                        .background(uiCanvas, in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("接入新模块").font(.system(size: 14, weight: .semibold))
+                        Text("查看统一清单、设置适配器与手机渲染器的接入结构")
+                            .font(.system(size: 11)).foregroundStyle(uiMuted)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(uiAccent)
+                }
+                .padding(15).background(uiCard, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(uiLine, style: StrokeStyle(lineWidth: 1, dash: [5])))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func moduleCard(_ module: PhoneModuleDefinition) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button { selectedModuleId = module.id } label: {
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack {
+                        Image(systemName: module.icon).font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(uiAccent).frame(width: 48, height: 48)
+                            .background(uiCanvas, in: RoundedRectangle(cornerRadius: 14))
+                        Spacer()
+                        Text(module.category.uppercased()).font(.system(size: 9, weight: .bold)).tracking(1.5)
+                            .foregroundStyle(uiMuted)
+                    }
+                    Text(module.name).font(.system(size: 20, weight: .bold, design: .serif))
+                    Text(module.summary).font(.system(size: 12)).foregroundStyle(uiMuted)
+                        .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        ForEach(module.features.prefix(3), id: \.self) { feature in
+                            Text(feature).font(.system(size: 9, weight: .medium)).foregroundStyle(uiAccent)
+                                .padding(.horizontal, 7).padding(.vertical, 5)
+                                .background(uiCanvas, in: Capsule())
+                        }
+                    }
+                    HStack {
+                        Text("打开设置").font(.system(size: 12, weight: .semibold))
+                        Spacer(); Image(systemName: "arrow.right")
+                    }.foregroundStyle(uiAccent)
+                }
+            }
+            .buttonStyle(.plain)
+            Divider().overlay(uiLine)
+            Toggle("显示在手机上", isOn: moduleEnabled(module.id))
+                .toggleStyle(.switch).tint(uiAccent).font(.system(size: 12, weight: .medium))
+        }
+        .padding(18).frame(maxWidth: .infinity, minHeight: 265, alignment: .topLeading)
+        .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+    }
+
+    @ViewBuilder private func moduleSettingsPage(_ id: String) -> some View {
+        if id == "__developer__" { moduleDeveloperGuide }
+        else if let module = model.moduleCatalog.first(where: { $0.id == id }) {
+            VStack(alignment: .leading, spacing: 18) {
+                moduleSettingsHeader(module)
+                if module.settings == "profile" { profileModuleSettings }
+                else { codexModuleSettings }
+            }
+        } else { moduleLibrary }
+    }
+
+    private func moduleSettingsHeader(_ module: PhoneModuleDefinition) -> some View {
+        HStack(spacing: 15) {
+            Button { selectedModuleId = nil } label: { Label("返回模块中心", systemImage: "chevron.left") }
+                .buttonStyle(.plain).foregroundStyle(uiAccent)
+            Rectangle().fill(uiLine).frame(width: 1, height: 34)
+            Image(systemName: module.icon).font(.system(size: 22)).foregroundStyle(uiAccent)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(module.name).font(.system(size: 20, weight: .bold, design: .serif))
+                Text(module.summary).font(.system(size: 11)).foregroundStyle(uiMuted)
+            }
+            Spacer()
+            Toggle("在手机上显示", isOn: moduleEnabled(module.id)).toggleStyle(.switch).tint(uiAccent)
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .padding(18).background(uiCard, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(uiLine))
+    }
+
+    private var codexModuleSettings: some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
+                sectionTitle("运行状态", caption: "LIVE SOURCE")
+                statusRow("Codex 接口", model.codexConnected ? "已连接" : "未连接")
+                statusRow("可见任务", "\(model.taskCount) 个")
+                statusRow("手机连接", model.phoneConnected ? "已连接" : "等待配对")
+            }
+            .padding(22).frame(maxWidth: .infinity, alignment: .leading)
+            .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+            VStack(alignment: .leading, spacing: 14) {
+                sectionTitle("手机上的行为", caption: "BEHAVIOR")
+                moduleInfoRow("波形", "任务更新以流式时间线显示")
+                moduleInfoRow("mic.fill", "录音交给电脑本地转写")
+                moduleInfoRow("checkmark.shield.fill", "转写内容确认后才发送")
+                Text("此模块不需要额外配置。运行中的桌面任务保持只读。")
+                    .font(.system(size: 11)).foregroundStyle(uiMuted).padding(.top, 4)
+            }
+            .padding(22).frame(maxWidth: .infinity, alignment: .leading)
+            .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+        }
+    }
+
+    private var profileModuleSettings: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            sectionTitle("名片内容", caption: "PROFILE SETTINGS")
+            Text("留空的项目不会显示在手机上。")
+                .font(.system(size: 12)).foregroundStyle(uiMuted)
+            HStack(alignment: .top, spacing: 14) {
+                VStack(spacing: 13) {
                     profileField("姓名", hint: "你希望展示的名字", text: $model.modules.profile.name)
                     profileField("一句话介绍", hint: "例如：设计与代码的实践者", text: $model.modules.profile.headline)
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("自我介绍").font(.system(size: 12, weight: .semibold))
-                        TextEditor(text: $model.modules.profile.bio)
-                            .font(.system(size: 13)).scrollContentBackground(.hidden)
-                            .padding(7).frame(height: 140)
-                            .background(uiCanvas, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(uiLine))
-                    }
                     profileField("个人网站", hint: "https://example.com", text: $model.modules.profile.website)
                     profileField("邮箱", hint: "name@example.com", text: $model.modules.profile.email)
                     profileField("其他联系方式", hint: "微信、电话或其他方式", text: $model.modules.profile.contact)
                 }
-                .padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                .background(uiCard, in: RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("自我介绍").font(.system(size: 12, weight: .semibold))
+                    TextEditor(text: $model.modules.profile.bio)
+                        .font(.system(size: 13)).scrollContentBackground(.hidden)
+                        .padding(9).frame(minHeight: 245)
+                        .background(uiCanvas, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(uiLine))
+                }.frame(maxWidth: .infinity)
             }
+            HStack { Spacer(); Button("保存并同步到手机") { model.saveModules() }
+                .buttonStyle(.borderedProminent).tint(uiAccent) }
+        }
+        .padding(22).background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+    }
+
+    private var moduleDeveloperGuide: some View {
+        VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Spacer()
-                Button("保存并同步到手机") { model.saveModules() }
-                    .buttonStyle(.borderedProminent).tint(uiAccent)
+                Button { selectedModuleId = nil } label: { Label("返回模块中心", systemImage: "chevron.left") }
+                    .buttonStyle(.plain).foregroundStyle(uiAccent)
+                Spacer(); Text("MODULE SDK").font(.system(size: 10, weight: .bold)).tracking(2).foregroundStyle(uiMuted)
             }
+            sectionTitle("接入新模块", caption: "ONE ID · THREE ADAPTERS")
+            Text("每个功能由一个稳定 ID 串起清单、电脑设置页和手机显示页。桥接程序负责保存配置并把同一份模块清单同步给所有端。")
+                .font(.system(size: 13)).foregroundStyle(uiMuted).lineSpacing(4)
+            HStack(alignment: .top, spacing: 14) {
+                developerStep("1", "注册清单", "在 mac/modules.js 添加名称、说明、分类、图标、设置类型与能力标签。")
+                developerStep("2", "实现设置", "Mac 和 Windows 按 settings 字段打开对应设置页，统一写入 /modules。")
+                developerStep("3", "实现手机页", "Android 使用同一个模块 ID 注册显示页面，并从 snapshot 读取配置。")
+            }
+            Text("完整字段、数据流和检查清单见仓库 docs/MODULES.md。")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(uiAccent)
+                .padding(15).frame(maxWidth: .infinity, alignment: .leading)
+                .background(uiCanvas, in: RoundedRectangle(cornerRadius: 14))
+        }
+        .padding(22).background(uiCard, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(uiLine))
+    }
+
+    private func developerStep(_ number: String, _ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(number).font(.system(size: 18, weight: .bold, design: .rounded)).foregroundStyle(uiAccent)
+                .frame(width: 38, height: 38).background(uiCanvas, in: Circle())
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Text(detail).font(.system(size: 11)).foregroundStyle(uiMuted).lineSpacing(4)
+        }.padding(16).frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+            .background(uiCanvas.opacity(0.7), in: RoundedRectangle(cornerRadius: 15))
+    }
+
+    private func moduleInfoRow(_ symbol: String, _ text: String) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: symbol).foregroundStyle(uiAccent).frame(width: 24)
+            Text(text).font(.system(size: 12))
         }
     }
 
-    private func moduleToggle(_ title: String, detail: String, id: String, symbol: String) -> some View {
-        let enabled = model.modules.enabled.contains(id)
-        return Button { model.setModule(id, enabled: !enabled) } label: {
-            HStack(spacing: 11) {
-                Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(uiAccent)
-                    .frame(width: 27)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 14, weight: .semibold))
-                    Text(detail).font(.system(size: 11)).foregroundStyle(uiMuted)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 21)).foregroundStyle(enabled ? uiAccent : uiMuted)
-            }
-        }
-        .buttonStyle(.plain).accessibilityValue(enabled ? "已启用" : "已关闭")
-        .padding(12)
-        .background(uiCanvas, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(uiLine))
+    private func moduleEnabled(_ id: String) -> Binding<Bool> {
+        Binding(get: { model.modules.enabled.contains(id) }, set: { enabled in
+            model.setModule(id, enabled: enabled); model.saveModules()
+        })
     }
 
     private func profileField(_ title: String, hint: String, text: Binding<String>) -> some View {

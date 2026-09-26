@@ -10,6 +10,7 @@
 - Codex 任务以流式时间线显示。运行中的任务只读，空闲任务可接收确认后的语音命令。
 - 手机录音在电脑本地通过 whisper.cpp 转写，手机预览并确认后才发送。
 - 模块化功能列表：目前包含 Codex 监看和个人名片，桌面端可选择是否显示。
+- 电脑端采用“模块中心 → 独立设置页”结构；模块清单由桥接层统一下发，新增功能可按 [模块接入指南](docs/MODULES.md) 扩展三端适配器。
 - 个人名片全屏展示姓名、自介、网站、邮箱和其他联系方式。
 - 背景方案库以预览卡片展示内置和自定义方案，点击即可切换并同步到手机。
 - 点击“添加背景方案”进入可视化编辑器，可实时预览角色、渐变背景和 7 个主题色；保存后自动生成新的方案卡片。
@@ -24,9 +25,9 @@
 
 在 [Releases](../../releases) 下载：
 
-- `AI-Passport-Android-v0.3.1.apk`
-- `AI-Passport-macOS-v0.3.1.zip`
-- `AI-Passport-Windows-v0.3.1-x64.zip`
+- `AI-Passport-Android-v0.4.0.apk`
+- `AI-Passport-macOS-v0.4.0.zip`
+- `AI-Passport-Windows-v0.4.0-x64.zip`
 
 Android 端需要开启开发者选项和 USB 调试。桌面端点击“启动桥接”，再在手机输入六位配对码并点击“连接 / 配对”。USB 连接会自动配置 ADB 端口转发；Windows 包已包含 Android Platform Tools。局域网模式要求手机与电脑可以互相访问。
 

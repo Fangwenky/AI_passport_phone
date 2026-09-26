@@ -75,6 +75,7 @@ public class MainActivity extends Activity {
     private Bitmap customCharacter;
     private String activeModule = "menu", moduleSettings = "";
     private final ArrayList<String> enabledModules = new ArrayList<>(Arrays.asList("codex", "profile"));
+    private JSONArray moduleCatalog = new JSONArray();
     private JSONObject profile = new JSONObject();
     private boolean bioFullscreen = false;
     private int backgroundStart = 0xFF061B3A, backgroundEnd = 0xFF0B4D80;
@@ -530,28 +531,48 @@ public class MainActivity extends Activity {
         if (moduleList == null) return;
         moduleList.removeAllViews();
         if (enabledModules.isEmpty()) {
-            TextView empty = label("暂时没有启用功能。请在 Mac 的「手机功能」中选择。", 14, muted, false);
+            TextView empty = label("暂时没有启用功能。请在电脑端的「模块中心」中选择。", 14, muted, false);
             pad(empty, 18, 20); empty.setBackground(card(cream, 18)); moduleList.addView(empty);
             return;
         }
         for (String id : enabledModules) {
             boolean codexModule = id.equals("codex");
+            JSONObject definition = moduleDefinition(id);
+            String name = definition == null ? (codexModule ? "Codex 监看" : "个人名片")
+                : definition.optString("shortName", definition.optString("name"));
+            String summary = definition == null ? (codexModule ? "实时进度与语音命令" : "简介、网站与联系方式")
+                : definition.optString("summary");
+            String iconValue = definition == null ? (codexModule ? "◉" : "✦") : definition.optString("phoneIcon", "✦");
             LinearLayout tile = row(); pad(tile, 17, 18); tile.setMinimumHeight(dp(92));
             tile.setBackground(card(cream, 20)); tile.setOnClickListener(v -> showModule(id));
             LinearLayout.LayoutParams tileP = new LinearLayout.LayoutParams(-1, -2);
             tileP.bottomMargin = dp(11); moduleList.addView(tile, tileP);
-            TextView icon = label(codexModule ? "◉" : "✦", 24, apple, true);
+            TextView icon = label(iconValue, 24, apple, true);
             icon.setGravity(Gravity.CENTER); icon.setBackground(background(
                 theme.equals("midnight") ? 0xFF483543 : 0xFFF7E7DA, 14));
             tile.addView(icon, new LinearLayout.LayoutParams(dp(54), dp(54)));
             LinearLayout text = column(); LinearLayout.LayoutParams textP = new LinearLayout.LayoutParams(0, -2, 1);
             textP.leftMargin = dp(15); tile.addView(text, textP);
-            text.addView(label(codexModule ? "Codex 监看" : "个人名片", 17, ink, true));
-            TextView detail = label(codexModule ? "实时进度与语音命令" : "简介、网站与联系方式", 12, muted, false);
+            text.addView(label(name, 17, ink, true));
+            TextView detail = label(summary, 12, muted, false); detail.setMaxLines(2);
             LinearLayout.LayoutParams detailP = new LinearLayout.LayoutParams(-1, -2);
             detailP.topMargin = dp(5); text.addView(detail, detailP);
             tile.addView(label("›", 25, apple, false));
         }
+    }
+
+    private JSONObject moduleDefinition(String id) {
+        for (int i = 0; i < moduleCatalog.length(); i++) {
+            JSONObject value = moduleCatalog.optJSONObject(i);
+            if (value != null && id.equals(value.optString("id"))) return value;
+        }
+        return null;
+    }
+
+    private void applyModuleCatalog(JSONArray catalog) {
+        if (catalog == null) return;
+        moduleCatalog = catalog;
+        renderModuleMenu();
     }
 
     private void showModule(String id) {
@@ -906,12 +927,16 @@ public class MainActivity extends Activity {
             String type = event.optString("type");
             if (type.equals("snapshot")) {
                 applyAppearance(event.optJSONObject("appearance"));
+                applyModuleCatalog(event.optJSONArray("moduleCatalog"));
                 applyModules(event.optJSONObject("modules"));
                 tasks.clear(); JSONArray values = event.optJSONArray("tasks");
                 if (values != null) for (int i = 0; i < values.length(); i++) tasks.add(values.getJSONObject(i));
                 lastSnapshot = System.currentTimeMillis(); updateConnectionUI(); renderTasks();
             } else if (type.equals("appearance")) applyAppearance(event.optJSONObject("appearance"));
-            else if (type.equals("modules")) applyModules(event.optJSONObject("modules"));
+            else if (type.equals("modules")) {
+                applyModuleCatalog(event.optJSONArray("moduleCatalog"));
+                applyModules(event.optJSONObject("modules"));
+            }
             else if (type.equals("transcript")) showTranscript(event.optString("text"));
             else if (type.equals("command_result")) notice("命令已发送到 Codex");
             else if (type.equals("error")) notice(event.optString("message", "未知错误"));
